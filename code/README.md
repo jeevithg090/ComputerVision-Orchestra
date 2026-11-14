@@ -78,7 +78,7 @@ export OPENAI_FALLBACK_MODEL="gpt-4o"         # optional
 ```
 
 Or copy `.env.example` (project root) to `.env` and fill it in. See the
-project [README](../README.md#configure) for every supported variable.
+project [README](../README.md#configuration) for every supported variable.
 
 ## Usage
 
@@ -96,6 +96,17 @@ This processes `dataset/claims.csv` and writes `output.csv` to the project root.
 ```bash
 python main.py --input path/to/claims.csv --output path/to/output.csv
 ```
+
+### Useful Flags
+
+```bash
+python main.py --check            # validate the CSV and every image path; no API key, no API calls
+python main.py --limit 3 --quiet  # smoke-test the first 3 claims, one line of output per claim
+python main.py --help             # all options, examples and environment variables
+```
+
+`evaluation/main.py` accepts `--input`, `--report-dir`, `--limit` and `--quiet`
+in the same way.
 
 ### Run Evaluation (Sample Set)
 

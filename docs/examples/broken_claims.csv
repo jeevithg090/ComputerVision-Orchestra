@@ -1,0 +1,3 @@
+"user_id","image_paths","user_claim","claim_object"
+"user_001","images/sample/case_001/img_1.jpg","Customer: There is a dent on my rear bumper.","car"
+"demo_user","images/sample/case_001/img_1.jpg;images/sample/case_999/img_2.jpg","Customer: My laptop screen is cracked.","laptop"
