@@ -1,0 +1,25 @@
+[project]
+name = "evidence-review"
+version = "1.0.0"
+description = "Multi-modal damage-claim evidence review: vision-model analysis plus deterministic adjudication policies."
+readme = "README.md"
+requires-python = ">=3.10"
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+src = ["code"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "C4"]
+ignore = [
+    "E501", # long prompt strings and table rows are intentional
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["config", "models", "llm_client", "prompts", "pipeline", "stages", "main", "evaluation"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["code"]
+addopts = "-ra"
