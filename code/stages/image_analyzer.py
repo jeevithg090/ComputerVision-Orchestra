@@ -186,6 +186,8 @@ def unreadable_image_analysis(image_id: str) -> SingleImageAnalysis:
 def resolve_images(
     image_ids: list[str],
     relative_paths: list[str],
+    *,
+    warn: bool = True,
 ) -> tuple[list[tuple[str, Path]], list[str]]:
     """
     Resolve image paths (relative to ``dataset/``, or absolute).
@@ -202,7 +204,8 @@ def resolve_images(
         if full.is_file():
             present.append((image_id, full))
         else:
-            print(f"  ⚠ Image not found: {full}")
+            if warn:
+                print(f"  ⚠ Image not found: {full}")
             missing.append(image_id)
     return present, missing
 
