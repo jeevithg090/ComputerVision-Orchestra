@@ -27,14 +27,10 @@ from typing import Dict, List, Optional, Tuple
 # Ensure the code directory is on the path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from config import SAMPLE_CLAIMS_CSV, PROJECT_ROOT, load_user_history
-from models import ClaimInput, ClaimResult
-from llm_client import LLMClient, TokenTracker
-from stages.claim_extractor import extract_claim
-from stages.image_analyzer import analyze_images
-from stages.evidence_matcher import match_evidence
-from stages.risk_assessor import assess_risk
-from stages.decision_synthesizer import synthesize_decision
+from config import SAMPLE_CLAIMS_CSV, load_user_history  # noqa: E402
+from llm_client import LLMClient, TokenTracker  # noqa: E402
+from models import ClaimInput, ClaimResult  # noqa: E402
+from pipeline import process_claims  # noqa: E402
 
 
 # ── Load Ground Truth ───────────────────────────────────────────────────────
@@ -174,6 +170,7 @@ def generate_report(
 ):
     """Generate the evaluation report markdown file."""
     n = len(results)
+    per_claim = elapsed / n if n else 0.0
 
     # Collect predicted values
     pred = {
@@ -234,7 +231,7 @@ def generate_report(
         "",
         f"**Date:** {time.strftime('%Y-%m-%d %H:%M:%S')}",
         f"**Sample size:** {n} claims",
-        f"**Runtime:** {elapsed:.1f}s ({elapsed/n:.1f}s per claim)",
+        f"**Runtime:** {elapsed:.1f}s ({per_claim:.1f}s per claim)",
         "",
         "## Strategy Comparison",
         "",
@@ -349,12 +346,12 @@ def generate_report(
         "",
         "### Model Calls",
         f"- Total API calls: {token_summary['total_calls']}",
-        f"- Approximate calls per claim: {token_summary['total_calls'] / n:.1f}",
+        f"- Approximate calls per claim: {token_summary['total_calls'] / n if n else 0.0:.1f}",
         "",
         "### Token Usage",
         f"- Input tokens: {token_summary['total_input_tokens']:,}",
         f"- Output tokens: {token_summary['total_output_tokens']:,}",
-        f"- Reasoning tokens (o3): {token_summary['total_reasoning_tokens']:,}",
+        f"- Reasoning tokens: {token_summary['total_reasoning_tokens']:,}",
         "",
         "### Model Breakdown",
         "",
@@ -396,7 +393,7 @@ def generate_report(
         "",
         "### Performance",
         f"- Total runtime: {elapsed:.1f}s",
-        f"- Average per claim: {elapsed/n:.1f}s",
+        f"- Average per claim: {per_claim:.1f}s",
         f"- Images processed: {sum(len(r.image_analysis.images) for r in results)}",
         "",
         "### Rate Limit Strategy",
@@ -518,55 +515,16 @@ def main():
 
     # Initialize LLM client
     tracker = TokenTracker()
-    client = LLMClient(tracker=tracker)
-    print(f"🤖 LLM client initialized\n")
+    try:
+        client = LLMClient(tracker=tracker)
+    except OSError as e:
+        print(f"❌ {e}", file=sys.stderr)
+        sys.exit(1)
+    print("🤖 LLM client initialized\n")
 
     # Process all sample claims
     start_time = time.time()
-    results: List[ClaimResult] = []
-
-    for i, claim in enumerate(claims):
-        print(f"\n{'─' * 60}")
-        try:
-            from main import process_claim
-            result = process_claim(claim, user_history, client, i, len(claims))
-            results.append(result)
-        except Exception as e:
-            print(f"  ❌ Error processing {claim.user_id}: {e}")
-            import traceback
-            traceback.print_exc()
-            # Create fallback
-            from models import (
-                ClaimExtraction, ImageAnalysisResult, EvidenceCheck,
-                RiskProfile, ClaimDecision,
-            )
-            fallback = ClaimResult(
-                input=claim,
-                extraction=ClaimExtraction(
-                    claimed_damage_type="unknown",
-                    claimed_object_part="unknown",
-                    claim_summary="Error",
-                ),
-                image_analysis=ImageAnalysisResult(images=[]),
-                evidence_check=EvidenceCheck(
-                    evidence_standard_met=False,
-                    evidence_standard_met_reason="Error",
-                ),
-                risk_profile=RiskProfile(risk_flags=["manual_review_required"]),
-                decision=ClaimDecision(
-                    evidence_standard_met=False,
-                    evidence_standard_met_reason="Error",
-                    risk_flags="manual_review_required",
-                    issue_type="unknown",
-                    object_part="unknown",
-                    claim_status="not_enough_information",
-                    claim_status_justification="Error during processing.",
-                    supporting_image_ids="none",
-                    valid_image=False,
-                    severity="unknown",
-                ),
-            )
-            results.append(fallback)
+    results: List[ClaimResult] = process_claims(claims, user_history, client)
 
     elapsed = time.time() - start_time
 
