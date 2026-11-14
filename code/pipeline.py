@@ -12,9 +12,14 @@ and the evaluation harness (``evaluation/main.py``).
 from __future__ import annotations
 
 import csv
+import time
 import traceback
+from collections import Counter
 from collections.abc import Callable
+from dataclasses import dataclass, field
 from pathlib import Path
+
+from pydantic import ValidationError
 
 from llm_client import LLMClient, TokenTracker
 from models import (
@@ -29,7 +34,7 @@ from models import (
 from stages.claim_extractor import extract_claim
 from stages.decision_synthesizer import synthesize_decision
 from stages.evidence_matcher import match_evidence
-from stages.image_analyzer import analyze_images
+from stages.image_analyzer import analyze_images, resolve_images
 from stages.risk_assessor import assess_risk
 
 # ── Output CSV Column Order ─────────────────────────────────────────────────
@@ -52,6 +57,30 @@ OUTPUT_COLUMNS = [
 ]
 
 
+REQUIRED_INPUT_COLUMNS = ("user_id", "image_paths", "user_claim", "claim_object")
+ALLOWED_CLAIM_OBJECTS = ("car", "laptop", "package")
+
+
+class InputError(ValueError):
+    """The input CSV is unreadable or does not match the expected schema."""
+
+
+# ── Console output ──────────────────────────────────────────────────────────
+
+_verbose = True
+
+
+def set_verbose(verbose: bool) -> None:
+    """Toggle per-stage progress lines (``--quiet`` turns them off)."""
+    global _verbose
+    _verbose = verbose
+
+
+def _detail(message: str) -> None:
+    if _verbose:
+        print(message)
+
+
 # ── Pipeline ────────────────────────────────────────────────────────────────
 
 
@@ -67,32 +96,32 @@ def process_claim(
     prefix = f"[{claim_index + 1}/{total_claims}] {claim.user_id}"
 
     # Stage 1: Claim Extraction
-    print(f"  {prefix} → Stage 1: Extracting claim...")
+    _detail(f"  {prefix} → Stage 1: Extracting claim...")
     extraction = extract_claim(claim, client)
-    print(f"    Claim: {extraction.claim_summary[:80]}...")
+    _detail(f"    Claim: {extraction.claim_summary[:80]}...")
 
     # Stage 2: Image Analysis
     num_images = len(claim.image_path_list)
-    print(f"  {prefix} → Stage 2: Analyzing {num_images} image(s)...")
+    _detail(f"  {prefix} → Stage 2: Analyzing {num_images} image(s)...")
     image_analysis = analyze_images(claim, extraction, client)
     for img in image_analysis.images:
         status = "✓ damage" if img.damage_visible else "✗ no damage"
-        print(f"    {img.image_id}: {img.object_visible}/{img.part_visible} [{status}]")
+        _detail(f"    {img.image_id}: {img.object_visible}/{img.part_visible} [{status}]")
 
     # Stage 3: Evidence Matching
-    print(f"  {prefix} → Stage 3: Checking evidence standards...")
+    _detail(f"  {prefix} → Stage 3: Checking evidence standards...")
     evidence_check = match_evidence(claim, extraction, image_analysis)
     met = "✓ met" if evidence_check.evidence_standard_met else "✗ not met"
-    print(f"    Evidence standard: {met}")
+    _detail(f"    Evidence standard: {met}")
 
     # Stage 4: Risk Assessment
-    print(f"  {prefix} → Stage 4: Assessing risk...")
+    _detail(f"  {prefix} → Stage 4: Assessing risk...")
     risk_profile = assess_risk(claim, extraction, image_analysis)
-    print(f"    Risk flags: {', '.join(risk_profile.risk_flags)}")
+    _detail(f"    Risk flags: {', '.join(risk_profile.risk_flags)}")
 
     # Stage 5: Decision Synthesis
     user_data = user_history.get(claim.user_id)
-    print(f"  {prefix} → Stage 5: Synthesizing decision (policies + fallback)...")
+    _detail(f"  {prefix} → Stage 5: Synthesizing decision (policies + fallback)...")
     decision = synthesize_decision(
         claim,
         extraction,
@@ -102,7 +131,7 @@ def process_claim(
         user_data,
         client,
     )
-    print(f"    ═══ Decision: {decision.claim_status.upper()} (severity={decision.severity}) ═══")
+    _detail(f"    ═══ Decision: {decision.claim_status.upper()} (severity={decision.severity}) ═══")
 
     return ClaimResult(
         input=claim,
@@ -155,32 +184,123 @@ def process_claims(
     """Process claims sequentially; a failing claim yields a fallback row, never a crash."""
     process = process or process_claim
     results: list[ClaimResult] = []
+    total = len(claims)
     for i, claim in enumerate(claims):
-        print(f"\n{'─' * 60}")
+        _detail(f"\n{'─' * 60}")
+        started = time.time()
         try:
-            results.append(process(claim, user_history, client, i, len(claims)))
+            result = process(claim, user_history, client, i, total)
         except Exception as e:  # noqa: BLE001 - one bad claim must not abort the batch
-            print(f"  ❌ Error processing {claim.user_id}: {e}")
+            print(f"  ❌ [{i + 1}/{total}] {claim.user_id}: {type(e).__name__}: {e}")
+            print("     → wrote a conservative not_enough_information row; see traceback below")
             traceback.print_exc()
-            results.append(fallback_result(claim))
+            result = fallback_result(claim)
+        if not _verbose:
+            d = result.decision
+            print(
+                f"  [{i + 1:>{len(str(total))}}/{total}] {claim.user_id:<10} {claim.claim_object:<8} "
+                f"→ {d.claim_status:<22} {d.issue_type}/{d.object_part} "
+                f"severity={d.severity} ({time.time() - started:.1f}s)"
+            )
+        results.append(result)
     return results
 
 
 def load_claims(csv_path: Path) -> list[ClaimInput]:
-    """Load claims from a CSV file (extra columns, e.g. labels, are ignored)."""
+    """
+    Load claims from a CSV file (extra columns, e.g. labels, are ignored).
+
+    Raises ``InputError`` with a human-readable message when the file is not
+    valid UTF-8 CSV, is missing a required column, or a row has an invalid
+    ``claim_object``.
+    """
     claims = []
-    with open(csv_path, encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            claims.append(
-                ClaimInput(
-                    user_id=row["user_id"].strip(),
-                    image_paths=row["image_paths"].strip(),
-                    user_claim=row["user_claim"].strip(),
-                    claim_object=row["claim_object"].strip(),
+    try:
+        with open(csv_path, encoding="utf-8", newline="") as f:
+            reader = csv.DictReader(f)
+            columns = reader.fieldnames or []
+            missing = [c for c in REQUIRED_INPUT_COLUMNS if c not in columns]
+            if missing:
+                raise InputError(
+                    f"{csv_path} is missing required column(s): {', '.join(missing)}. "
+                    f"Expected a header with: {', '.join(REQUIRED_INPUT_COLUMNS)}."
                 )
-            )
+            # Line 1 is the header, so the first data row is line 2.
+            for line_no, row in enumerate(reader, start=2):
+                try:
+                    claims.append(
+                        ClaimInput(
+                            user_id=(row["user_id"] or "").strip(),
+                            image_paths=(row["image_paths"] or "").strip(),
+                            user_claim=(row["user_claim"] or "").strip(),
+                            claim_object=(row["claim_object"] or "").strip(),
+                        )
+                    )
+                except ValidationError:
+                    value = (row.get("claim_object") or "").strip()
+                    raise InputError(
+                        f"{csv_path}, line {line_no}: claim_object must be one of "
+                        f"{', '.join(ALLOWED_CLAIM_OBJECTS)} (got {value!r})."
+                    ) from None
+    except UnicodeDecodeError as e:
+        raise InputError(f"{csv_path} is not valid UTF-8 text: {e}") from None
     return claims
+
+
+# ── Preflight ───────────────────────────────────────────────────────────────
+
+
+@dataclass
+class PreflightReport:
+    """Offline sanity check of an input file (no API calls)."""
+
+    num_claims: int = 0
+    num_images: int = 0
+    objects: Counter = field(default_factory=Counter)
+    missing_images: list[tuple[str, str]] = field(default_factory=list)  # (user_id, image_id)
+    rows_without_images: list[str] = field(default_factory=list)
+    users_without_history: list[str] = field(default_factory=list)
+
+    @property
+    def ok(self) -> bool:
+        return self.num_claims > 0 and not self.missing_images and not self.rows_without_images
+
+
+def preflight(claims: list[ClaimInput], user_history: dict[str, dict]) -> PreflightReport:
+    """Check that every referenced image exists and summarise the input."""
+    report = PreflightReport(num_claims=len(claims))
+    for claim in claims:
+        report.objects[claim.claim_object] += 1
+        report.num_images += len(claim.image_path_list)
+        if not claim.image_path_list:
+            report.rows_without_images.append(claim.user_id)
+        _present, missing = resolve_images(claim.image_ids, claim.image_path_list, warn=False)
+        report.missing_images.extend((claim.user_id, image_id) for image_id in missing)
+        if claim.user_id not in user_history:
+            report.users_without_history.append(claim.user_id)
+    return report
+
+
+def print_preflight(report: PreflightReport, input_path: Path) -> None:
+    """Human-readable preflight summary."""
+    objects = ", ".join(f"{name}={count}" for name, count in sorted(report.objects.items())) or "none"
+    print(f"Input:   {input_path}")
+    print(f"Claims:  {report.num_claims} ({objects})")
+    print(f"Images:  {report.num_images} referenced, {len(report.missing_images)} missing")
+    if report.users_without_history:
+        print(
+            f"History: {len(report.users_without_history)} user(s) have no row in user_history.csv "
+            f"(no history-based risk flags for them): {', '.join(report.users_without_history)}"
+        )
+    else:
+        print("History: every user has a row in user_history.csv")
+    for user_id, image_id in report.missing_images:
+        print(f"  ✗ {user_id}: image {image_id} not found under dataset/")
+    for user_id in report.rows_without_images:
+        print(f"  ✗ {user_id}: row has no image_paths")
+    if report.num_claims == 0:
+        print("  ✗ input file has a header but no claim rows")
+    print("\n✅ Preflight passed" if report.ok else "\n❌ Preflight found problems (see above)")
 
 
 def write_output(results: list[ClaimResult], output_path: Path):
