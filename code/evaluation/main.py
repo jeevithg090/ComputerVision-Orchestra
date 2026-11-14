@@ -10,12 +10,17 @@ Metrics computed:
   - Detailed error analysis
 
 Usage:
-  python -m evaluation.main
-  python evaluation/main.py
+  python code/evaluation/main.py                    # full run on dataset/sample_claims.csv
+  python code/evaluation/main.py --limit 5 --quiet  # quick, cheap smoke run
+  python code/evaluation/main.py --report-dir /tmp/eval
+
+Writes evaluation_report.md, predictions_sample.csv and intermediate_sample.jsonl
+into the report directory (default: code/evaluation/).
 """
 
 from __future__ import annotations
 
+import argparse
 import csv
 import json
 import sys
@@ -29,7 +34,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from config import SAMPLE_CLAIMS_CSV, load_user_history  # noqa: E402
 from llm_client import LLMClient, TokenTracker  # noqa: E402
 from models import ClaimInput, ClaimResult  # noqa: E402
-from pipeline import process_claims  # noqa: E402
+from pipeline import process_claims, set_verbose  # noqa: E402
 
 # ── Load Ground Truth ───────────────────────────────────────────────────────
 
@@ -517,18 +522,80 @@ def write_intermediates(
 # ── Main ────────────────────────────────────────────────────────────────────
 
 
-def main():
-    print("╔══════════════════════════════════════════════════════════╗")
-    print("║  Multi-Modal Evidence Review — Evaluation Mode          ║")
-    print("║  Running pipeline on sample_claims.csv with ground truth║")
-    print("╚══════════════════════════════════════════════════════════╝")
-    print()
+def _positive_int(value: str) -> int:
+    try:
+        number = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"expected a whole number, got {value!r}") from None
+    if number < 1:
+        raise argparse.ArgumentTypeError("must be 1 or greater")
+    return number
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="python code/evaluation/main.py",
+        description=(
+            "Run the pipeline on a labelled sample CSV and score every output field "
+            "against the ground truth (accuracy, risk-flag F1, image-ID overlap, confusion matrix)."
+        ),
+        epilog=(
+            "Requires OPENAI_API_KEY. Responses are cached under code/.cache/, "
+            "so a repeat run is fast and free."
+        ),
+    )
+    parser.add_argument(
+        "--input",
+        "-i",
+        type=Path,
+        default=SAMPLE_CLAIMS_CSV,
+        metavar="CSV",
+        help="labelled claims CSV (default: dataset/sample_claims.csv)",
+    )
+    parser.add_argument(
+        "--report-dir",
+        type=Path,
+        default=Path(__file__).resolve().parent,
+        metavar="DIR",
+        help="folder for the report, predictions and intermediates (default: code/evaluation/)",
+    )
+    parser.add_argument(
+        "--limit",
+        "-n",
+        type=_positive_int,
+        metavar="N",
+        help="only evaluate the first N rows",
+    )
+    parser.add_argument(
+        "--quiet",
+        "-q",
+        action="store_true",
+        help="print one line per claim instead of per-stage progress",
+    )
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+
+    if not args.input.is_file():
+        print(f"❌ Labelled input not found: {args.input}", file=sys.stderr)
+        return 1
+
+    print("Multi-Modal Evidence Review — evaluation")
+    print("─" * 60)
 
     # Load sample claims with labels
-    sample_data = load_sample_claims_with_labels(SAMPLE_CLAIMS_CSV)
+    try:
+        sample_data = load_sample_claims_with_labels(args.input)
+    except (KeyError, ValueError) as e:
+        print(f"❌ Could not read {args.input}: {e}", file=sys.stderr)
+        return 1
+    if args.limit:
+        sample_data = sample_data[: args.limit]
     claims = [s[0] for s in sample_data]
     expected = [s[1] for s in sample_data]
-    print(f"📂 Loaded {len(claims)} sample claims with ground truth")
+    print(f"📂 Loaded {len(claims)} labelled claims from {args.input}")
 
     # Load user history
     user_history = load_user_history()
@@ -540,30 +607,36 @@ def main():
         client = LLMClient(tracker=tracker)
     except OSError as e:
         print(f"❌ {e}", file=sys.stderr)
-        sys.exit(1)
-    print("🤖 LLM client initialized\n")
+        print("   Export it in your shell or copy .env.example to .env and fill it in.", file=sys.stderr)
+        return 1
+    print("🤖 LLM client initialized")
 
     # Process all sample claims
+    set_verbose(not args.quiet)
     start_time = time.time()
-    results: list[ClaimResult] = process_claims(claims, user_history, client)
-
+    try:
+        results: list[ClaimResult] = process_claims(claims, user_history, client)
+    except KeyboardInterrupt:
+        print("\n⏹  Interrupted. No report written; finished calls are cached and re-used next run.")
+        return 130
+    finally:
+        set_verbose(True)
     elapsed = time.time() - start_time
 
     # Generate evaluation report
-    report_path = Path(__file__).resolve().parent / "evaluation_report.md"
+    report_path = args.report_dir / "evaluation_report.md"
     metrics = generate_report(results, expected, tracker, elapsed, report_path)
 
     # Print summary
     print("\n" + "=" * 60)
     print("EVALUATION SUMMARY")
     print("=" * 60)
-    for field, score in metrics.items():
+    for metric, score in metrics.items():
         emoji = "✅" if score >= 0.8 else "⚠️" if score >= 0.6 else "❌"
-        print(f"  {emoji} {field}: {score:.1%}")
+        print(f"  {emoji} {metric}: {score:.1%}")
     print("=" * 60)
-
-    return metrics
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
