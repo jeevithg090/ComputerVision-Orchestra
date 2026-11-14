@@ -72,6 +72,14 @@ def _positive_int(value: str) -> int:
     return number
 
 
+def _display(path: Path) -> str:
+    """Show a path relative to the working directory when it is inside it."""
+    try:
+        return str(Path(path).resolve().relative_to(Path.cwd()))
+    except ValueError:
+        return str(path)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python code/main.py",
@@ -141,18 +149,12 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.check:
         report = preflight(claims, user_history)
-        print_preflight(report, input_path)
+        print_preflight(report, Path(_display(input_path)))
         return 0 if report.ok else 1
 
     if not claims:
         print(f"❌ {input_path} has no claim rows to process.", file=sys.stderr)
         return 1
-
-    print("Multi-Modal Evidence Review — claim verification")
-    print("─" * 60)
-    print(f"📂 Claims:       {input_path} ({len(claims)} to process)")
-    print(f"📂 User history: {USER_HISTORY_CSV} ({len(user_history)} users)")
-    print(f"📝 Output:       {output_path}")
 
     tracker = TokenTracker()
     try:
@@ -166,7 +168,12 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
 
-    print(f"🤖 Vision model: {IMAGE_ANALYSIS_MODEL} (response cache: {CACHE_DIR})")
+    print("Multi-Modal Evidence Review — claim verification")
+    print("─" * 60)
+    print(f"📂 Claims:       {_display(input_path)} ({len(claims)} to process)")
+    print(f"📂 User history: {_display(USER_HISTORY_CSV)} ({len(user_history)} users)")
+    print(f"📝 Output:       {_display(output_path)}")
+    print(f"🤖 Vision model: {IMAGE_ANALYSIS_MODEL} (response cache: {_display(CACHE_DIR)})")
 
     set_verbose(not args.quiet)
     start_time = time.time()

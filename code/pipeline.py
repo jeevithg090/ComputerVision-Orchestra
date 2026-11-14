@@ -329,7 +329,7 @@ def write_output(results: list[ClaimResult], output_path: Path):
                     "severity": d.severity,
                 }
             )
-    print(f"\n✅ Output written to: {output_path}")
+    print(f"\n✅ Wrote {len(results)} rows to: {output_path}")
 
 
 def print_summary(tracker: TokenTracker, elapsed: float, num_claims: int):
