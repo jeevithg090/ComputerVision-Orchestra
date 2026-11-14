@@ -1,21 +1,34 @@
+# OS / editor
 .DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Python
 __pycache__/
 *.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+build/
+dist/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.coverage
+htmlcov/
 
-# Secrets, credentials, and local-only runtime state
+# Secrets and credentials (keep .env.example tracked)
 .env
 .env.*
-**/.env
-**/.env.*
+!.env.example
 *.pem
 *.key
 *.p12
 *.pfx
-*secret*
-*token*
+
+# Local model-response cache
 code/.cache/
 **/.cache/
 
@@ -24,6 +37,3 @@ code.zip
 
 # Local notes/transcripts that may contain private context
 ai_chat_transcript.txt
-
-# Local duplicate/scratch copy
-code 2/
