@@ -186,7 +186,7 @@ def match_evidence(
             "sufficient to evaluate the claim."
         )
     else:
-        visible_parts = set(img.part_visible for img in matching_images if img.part_visible != "unknown")
+        visible_parts = sorted({img.part_visible for img in matching_images if img.part_visible != "unknown"})
         if visible_parts:
             reason = (
                 f"The {claim_object} is visible and shows "

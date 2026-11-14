@@ -34,8 +34,8 @@ from prompts import (
     DECISION_SYNTHESIS_DEVELOPER,
     build_decision_synthesis_user_prompt,
 )
+from normalize import normalize_label
 from stages.policies.contradiction_policy import (
-    damage_types_related,
     mismatch_issue_type,
     should_support_claim,
     supported_issue_type,
@@ -45,13 +45,8 @@ from stages.policies.risk_policy import finalize_risk_flags
 from stages.policies.severity_policy import calibrate_severity
 
 
-# Cache evidence requirements text
-_REQUIREMENTS_TEXT = None
-
-
-def _get_requirements_text(claim_object: str, issue_type: str) -> str:
+def _get_requirements_text(claim_object: str) -> str:
     """Build a human-readable string of applicable evidence requirements."""
-    global _REQUIREMENTS_TEXT
     reqs = load_evidence_requirements()
     lines = []
     for req in reqs:
@@ -95,10 +90,7 @@ def synthesize_decision(
         return ClaimDecision(**adjudicated.model_dump())
 
     # Build the evidence requirements text
-    requirements_text = _get_requirements_text(
-        claim.claim_object,
-        extraction.claimed_damage_type,
-    )
+    requirements_text = _get_requirements_text(claim.claim_object)
 
     sanitized_images = []
     has_text_instruction = False
@@ -411,21 +403,6 @@ def _best_damage_image(images):
     return max(images, key=lambda img: (img.damage_confidence, img.damage_severity == "high"))
 
 
-def _damage_types_related(type_a: str, type_b: str) -> bool:
-    return damage_types_related(type_a, type_b)
-
-
-def _calibrated_severity(issue_type: str, image_severity: str) -> str:
-    return calibrate_severity(
-        claim_status="supported",
-        issue_type=issue_type,
-        claim_object="unknown",
-        object_part="unknown",
-        image_severity=image_severity,
-        rule_id="legacy",
-    )
-
-
 def _adjudicated(
     rule_id: str,
     claim_status: str,
@@ -477,14 +454,14 @@ def _build_decision(
     user_history: Optional[dict] = None,
     has_text_instruction: bool = False,
 ) -> ClaimDecision:
-    """Validate and normalize the raw o3 response into a ClaimDecision."""
+    """Validate and normalize the raw fallback-model response into a ClaimDecision."""
 
     # ── claim_status ────────────────────────────────────────────────────
-    claim_status = raw.get("claim_status", "not_enough_information")
+    claim_status = str(raw.get("claim_status", "not_enough_information"))
     if claim_status not in CLAIM_STATUS_VALUES:
         claim_status = _closest_status(claim_status)
 
-    # ── CHANGE 2: FIX ALL MISSING-CONTENTS CLAIMS ──
+    # ── Missing-contents claims ─────────────────────────────────────────
     is_missing_claim = extraction.claimed_damage_type == "missing_part" and extraction.claimed_object_part in ["contents", "item"]
     if is_missing_claim:
         # Images generally cannot prove absence. Default to not_enough_information
@@ -500,15 +477,11 @@ def _build_decision(
             claim_status = "not_enough_information"
 
     # ── issue_type ──────────────────────────────────────────────────────
-    issue_type = raw.get("issue_type", "unknown")
-    if issue_type not in ISSUE_TYPE_VALUES:
-        issue_type = _normalize_to_set(issue_type, ISSUE_TYPE_VALUES, "unknown")
+    issue_type = normalize_label(raw.get("issue_type", "unknown"), ISSUE_TYPE_VALUES)
 
     # ── object_part ─────────────────────────────────────────────────────
-    object_part = raw.get("object_part", "unknown")
     valid_parts = OBJECT_PARTS.get(claim.claim_object, frozenset(["unknown"]))
-    if object_part not in valid_parts:
-        object_part = _normalize_to_set(object_part, valid_parts, "unknown")
+    object_part = normalize_label(raw.get("object_part", "unknown"), valid_parts)
 
     raw_severity = raw.get("severity", "unknown")
     severity = calibrate_severity(
@@ -539,14 +512,13 @@ def _build_decision(
     supporting_ids = raw.get("supporting_image_ids", "none")
     if isinstance(supporting_ids, list):
         supporting_ids = ";".join(supporting_ids) if supporting_ids else "none"
-    if not supporting_ids or supporting_ids.lower() == "none":
-        if claim_status == "not_enough_information":
-            supporting_ids = "none"
-        # For supported/contradicted, the model should have provided IDs
-        # If not, use all available image IDs
-        elif not supporting_ids or supporting_ids.lower() == "none":
-            all_ids = [img.image_id for img in []]
-            supporting_ids = "none"
+    supporting_ids = str(supporting_ids or "none").strip()
+    known_ids = {img.image_id for img in image_analysis.images}
+    selected = [sid.strip() for sid in supporting_ids.split(";") if sid.strip() in known_ids]
+    if claim_status == "not_enough_information" or not selected:
+        supporting_ids = "none"
+    else:
+        supporting_ids = ";".join(dict.fromkeys(selected))
 
     risk_flags_str = finalize_risk_flags(
         base_flags=set(valid_flags) | set(risk_profile.risk_flags),
@@ -601,15 +573,3 @@ def _closest_status(value: str) -> str:
     if "contradict" in v:
         return "contradicted"
     return "not_enough_information"
-
-
-def _normalize_to_set(value: str, allowed: frozenset[str], default: str) -> str:
-    """Normalize a value to the closest match in an allowed set."""
-    v = value.lower().strip().replace(" ", "_").replace("-", "_")
-    if v in allowed:
-        return v
-    # Substring match
-    for candidate in allowed:
-        if candidate in v or v in candidate:
-            return candidate
-    return default
