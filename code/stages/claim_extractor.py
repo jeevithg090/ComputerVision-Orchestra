@@ -11,9 +11,10 @@ Parses the user_claim conversation to extract:
 
 from __future__ import annotations
 
-from models import ClaimInput, ClaimExtraction
+from config import CLAIM_EXTRACTION_MODEL, ISSUE_TYPE_VALUES, OBJECT_PARTS
 from llm_client import LLMClient
-from config import CLAIM_EXTRACTION_MODEL, EXTRACTION_TEMPERATURE, OBJECT_PARTS
+from models import ClaimExtraction, ClaimInput
+from normalize import DAMAGE_SYNONYMS, normalize_label
 from prompts import CLAIM_EXTRACTION_SYSTEM, build_claim_extraction_user_prompt
 
 
@@ -37,62 +38,27 @@ def extract_claim(claim: ClaimInput, client: LLMClient) -> ClaimExtraction:
         model=CLAIM_EXTRACTION_MODEL,
         system_message=CLAIM_EXTRACTION_SYSTEM,
         user_message=user_prompt,
-        temperature=EXTRACTION_TEMPERATURE,
     )
 
     # Validate and normalize the damage type
-    claimed_damage = result.get("claimed_damage_type", "unknown")
-    from config import ISSUE_TYPE_VALUES
-    if claimed_damage not in ISSUE_TYPE_VALUES:
-        claimed_damage = _find_closest_match(claimed_damage, ISSUE_TYPE_VALUES)
+    claimed_damage = normalize_label(
+        result.get("claimed_damage_type", "unknown"),
+        ISSUE_TYPE_VALUES,
+        synonyms=DAMAGE_SYNONYMS,
+    )
 
     # Validate and normalize the object part
-    claimed_part = result.get("claimed_object_part", "unknown")
     valid_parts = OBJECT_PARTS.get(claim.claim_object, frozenset(["unknown"]))
-    if claimed_part not in valid_parts:
-        claimed_part = _find_closest_match(claimed_part, valid_parts)
+    claimed_part = normalize_label(result.get("claimed_object_part", "unknown"), valid_parts)
+
+    signals = result.get("adversarial_signals", [])
+    if isinstance(signals, str):
+        signals = [signals] if signals.strip() else []
 
     return ClaimExtraction(
         claimed_damage_type=claimed_damage,
         claimed_object_part=claimed_part,
         claim_summary=result.get("claim_summary", "Damage claim submitted."),
-        adversarial_signals=result.get("adversarial_signals", []),
+        adversarial_signals=[str(sig) for sig in signals if str(sig).strip()],
         language_detected=result.get("language_detected", "en"),
     )
-
-
-def _find_closest_match(value: str, allowed: frozenset[str]) -> str:
-    """
-    Find the closest match from allowed values using substring matching.
-    Falls back to 'unknown' if no reasonable match is found.
-    """
-    value_lower = value.lower().strip().replace(" ", "_").replace("-", "_")
-
-    # Exact match after normalization
-    if value_lower in allowed:
-        return value_lower
-
-    # Substring match
-    for candidate in allowed:
-        if candidate in value_lower or value_lower in candidate:
-            return candidate
-
-    # Common synonyms
-    synonyms = {
-        "cracked": "crack",
-        "broken": "broken_part",
-        "shattered": "glass_shatter",
-        "torn": "torn_packaging",
-        "crushed": "crushed_packaging",
-        "water": "water_damage",
-        "wet": "water_damage",
-        "missing": "missing_part",
-        "dented": "dent",
-        "scratched": "scratch",
-        "stained": "stain",
-    }
-    for syn, target in synonyms.items():
-        if syn in value_lower and target in allowed:
-            return target
-
-    return "unknown"

@@ -8,7 +8,7 @@ are centralized here so no magic strings leak into business logic.
 import os
 import csv
 from pathlib import Path
-from typing import Dict, FrozenSet, List, Optional
+from typing import Dict, FrozenSet, List
 
 # Load .env file if present (for OPENAI_API_KEY etc.)
 try:
@@ -22,7 +22,6 @@ try:
             break
 except ImportError:
     pass  # python-dotenv not installed, rely on shell env vars
-
 
 
 # ── Paths ───────────────────────────────────────────────────────────────────
@@ -48,15 +47,11 @@ IMAGE_ANALYSIS_MODEL = os.environ.get("IMAGE_ANALYSIS_MODEL", "gpt-5.5")
 DECISION_SYNTHESIS_MODEL = os.environ.get("DECISION_SYNTHESIS_MODEL", "gpt-5.5")
 FALLBACK_MODEL = os.environ.get("OPENAI_FALLBACK_MODEL", "gpt-4o")
 
-# Temperature for deterministic-leaning outputs (o3 ignores this)
-EXTRACTION_TEMPERATURE = 0.1
-IMAGE_ANALYSIS_TEMPERATURE = 0.1
-
-# o3 reasoning effort: "low", "medium", or "high"
-SYNTHESIS_REASONING_EFFORT = "high"
+# Reasoning effort for the final-decision fallback call: "low", "medium", or "high"
+SYNTHESIS_REASONING_EFFORT = os.environ.get("SYNTHESIS_REASONING_EFFORT", "high")
 
 # Image detail level sent to the vision model
-IMAGE_DETAIL = "high"  # "high" = best accuracy, "low" = cheaper / faster
+IMAGE_DETAIL = os.environ.get("IMAGE_DETAIL", "high")  # "high" = best accuracy, "low" = cheaper / faster
 
 
 # ── Retry & Rate-Limit ─────────────────────────────────────────────────────
@@ -147,29 +142,39 @@ ISSUE_TO_EVIDENCE_FAMILY: Dict[str, Dict[str, str]] = {
 
 # ── Data Loading Helpers ────────────────────────────────────────────────────
 
-def load_user_history() -> Dict[str, dict]:
+def _to_int(value: object) -> int:
+    """Parse a CSV count cell; blank or malformed cells count as 0."""
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return 0
+
+
+def load_user_history(path: Path = USER_HISTORY_CSV) -> Dict[str, dict]:
     """Load user_history.csv into a dict keyed by user_id."""
     history: Dict[str, dict] = {}
-    with open(USER_HISTORY_CSV, "r", encoding="utf-8") as f:
+    with open(path, encoding="utf-8") as f:
         reader = csv.DictReader(f)
         for row in reader:
-            uid = row["user_id"].strip()
+            uid = (row.get("user_id") or "").strip()
+            if not uid:
+                continue
             history[uid] = {
-                "past_claim_count": int(row.get("past_claim_count", 0)),
-                "accept_claim": int(row.get("accept_claim", 0)),
-                "manual_review_claim": int(row.get("manual_review_claim", 0)),
-                "rejected_claim": int(row.get("rejected_claim", 0)),
-                "last_90_days_claim_count": int(row.get("last_90_days_claim_count", 0)),
-                "history_flags": row.get("history_flags", "none").strip(),
-                "history_summary": row.get("history_summary", "").strip(),
+                "past_claim_count": _to_int(row.get("past_claim_count")),
+                "accept_claim": _to_int(row.get("accept_claim")),
+                "manual_review_claim": _to_int(row.get("manual_review_claim")),
+                "rejected_claim": _to_int(row.get("rejected_claim")),
+                "last_90_days_claim_count": _to_int(row.get("last_90_days_claim_count")),
+                "history_flags": (row.get("history_flags") or "none").strip(),
+                "history_summary": (row.get("history_summary") or "").strip(),
             }
     return history
 
 
-def load_evidence_requirements() -> List[dict]:
+def load_evidence_requirements(path: Path = EVIDENCE_REQUIREMENTS_CSV) -> List[dict]:
     """Load evidence_requirements.csv into a list of dicts."""
     reqs: List[dict] = []
-    with open(EVIDENCE_REQUIREMENTS_CSV, "r", encoding="utf-8") as f:
+    with open(path, encoding="utf-8") as f:
         reader = csv.DictReader(f)
         for row in reader:
             reqs.append({

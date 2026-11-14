@@ -5,6 +5,8 @@ Supports three calling modes:
   1. Text structured output through the Responses API
   2. Vision structured output with base64 local images
   3. Final-decision structured output fallback
+
+Responses are cached on disk; malformed (non-JSON) responses are never cached.
 """
 
 from __future__ import annotations
@@ -14,10 +16,12 @@ import hashlib
 import json
 import os
 import time
+from io import BytesIO
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from openai import OpenAI, APIError, RateLimitError, APITimeoutError, APIConnectionError
+from openai import APIConnectionError, APIError, APITimeoutError, OpenAI, RateLimitError
+from PIL import Image
 
 from config import (
     CACHE_DIR,
@@ -224,9 +228,6 @@ class FileCache:
 
 # ── Image Encoding ──────────────────────────────────────────────────────────
 
-from io import BytesIO
-from PIL import Image
-
 def encode_image_base64(image_path: str | Path) -> str:
     """Read an image file, convert to JPEG in memory, and return base64 string."""
     with Image.open(image_path) as img:
@@ -236,21 +237,6 @@ def encode_image_base64(image_path: str | Path) -> str:
         # Save as JPEG into the buffer
         rgb_img.save(buffer, format="JPEG")
         return base64.b64encode(buffer.getvalue()).decode("utf-8")
-
-
-def _image_content_part(image_path: str | Path) -> Dict[str, Any]:
-    """Build an OpenAI image_url content part from a local file, standardizing to JPEG."""
-    b64 = encode_image_base64(image_path)
-    # Since encode_image_base64 now converts everything to JPEG, we hardcode the media type.
-    media_type = "image/jpeg"
-
-    return {
-        "type": "image_url",
-        "image_url": {
-            "url": f"data:{media_type};base64,{b64}",
-            "detail": IMAGE_DETAIL,
-        },
-    }
 
 
 def _responses_image_content_part(image_path: str | Path) -> Dict[str, Any]:
@@ -294,7 +280,6 @@ class LLMClient:
         model: str,
         system_message: str,
         user_message: str,
-        temperature: float = 0.1,
     ) -> Dict[str, Any]:
         """Call a text-only model, returns parsed JSON dict."""
         return self._call_responses(
@@ -311,7 +296,6 @@ class LLMClient:
         system_message: str,
         user_text: str,
         image_paths: List[str | Path],
-        temperature: float = 0.1,
     ) -> Dict[str, Any]:
         """Call a vision model with text + images, returns parsed JSON dict."""
         user_content: List[Dict[str, Any]] = [
@@ -347,25 +331,6 @@ class LLMClient:
         )
 
     # ── Internal ────────────────────────────────────────────────────────
-
-    def _cache_key(self, model: str, messages: List[dict]) -> str:
-        """Build a deterministic cache key from model + messages (text only)."""
-        # For caching, we stringify messages but skip base64 image data
-        # (we include a hash of the image URLs/paths instead)
-        parts = [model]
-        for msg in messages:
-            content = msg.get("content", "")
-            if isinstance(content, str):
-                parts.append(content)
-            elif isinstance(content, list):
-                for item in content:
-                    if item.get("type") == "text":
-                        parts.append(item["text"])
-                    elif item.get("type") == "image_url":
-                        # Hash just the first 100 chars of the data URL to identify the image
-                        url = item.get("image_url", {}).get("url", "")
-                        parts.append(hashlib.md5(url[:200].encode()).hexdigest())
-        return json.dumps(parts, ensure_ascii=False)
 
     def _responses_cache_key(
         self,
@@ -437,7 +402,9 @@ class LLMClient:
                     reasoning_tok = getattr(details, "reasoning_tokens", 0) if details else 0
                     self.tracker.record(active_model, input_tok, output_tok, reasoning_tok)
 
-                    self.cache.set(cache_key, parsed)
+                    # Never cache a malformed response: a re-run should retry it.
+                    if "parse_error" not in parsed:
+                        self.cache.set(cache_key, parsed)
                     return parsed
 
                 except (RateLimitError, APITimeoutError, APIConnectionError) as e:
@@ -469,79 +436,6 @@ class LLMClient:
                     f"All {MAX_RETRIES} API call attempts failed for model {active_model}. "
                     f"Last error: {last_error}"
                 )
-
-    def _call(
-        self,
-        model: str,
-        messages: List[dict],
-        temperature: float = 0.1,
-        reasoning_effort: str = "high",
-        is_reasoning: bool = False,
-    ) -> Dict[str, Any]:
-        """Execute an API call with retry, caching, and token tracking."""
-        cache_key = self._cache_key(model, messages)
-        cached = self.cache.get(cache_key)
-        if cached is not None:
-            self.tracker.record(model, 0, 0, cached=True)
-            return cached
-
-        last_error: Optional[Exception] = None
-        for attempt in range(MAX_RETRIES):
-            try:
-                kwargs: Dict[str, Any] = {
-                    "model": model,
-                    "messages": messages,
-                    "response_format": {"type": "json_object"},
-                }
-                if is_reasoning:
-                    kwargs["reasoning_effort"] = reasoning_effort
-                    # o3 doesn't accept temperature
-                else:
-                    kwargs["temperature"] = temperature
-
-                response = self.client.chat.completions.create(**kwargs)
-
-                # Parse response
-                content = response.choices[0].message.content or "{}"
-                parsed = self._parse_json(content)
-
-                # Track tokens
-                usage = response.usage
-                input_tok = usage.prompt_tokens if usage else 0
-                output_tok = usage.completion_tokens if usage else 0
-                reasoning_tok = 0
-                if usage and hasattr(usage, "completion_tokens_details") and usage.completion_tokens_details:
-                    reasoning_tok = getattr(usage.completion_tokens_details, "reasoning_tokens", 0) or 0
-
-                self.tracker.record(model, input_tok, output_tok, reasoning_tok)
-
-                # Cache the result
-                self.cache.set(cache_key, parsed)
-                return parsed
-
-            except (RateLimitError, APITimeoutError, APIConnectionError) as e:
-                last_error = e
-                delay = min(
-                    RETRY_BASE_DELAY_S * (2 ** attempt),
-                    RETRY_MAX_DELAY_S,
-                )
-                print(f"  ⚠ API error (attempt {attempt + 1}/{MAX_RETRIES}): {e}")
-                print(f"    Retrying in {delay:.1f}s...")
-                time.sleep(delay)
-
-            except APIError as e:
-                last_error = e
-                if e.status_code and e.status_code >= 500:
-                    delay = min(RETRY_BASE_DELAY_S * (2 ** attempt), RETRY_MAX_DELAY_S)
-                    print(f"  ⚠ Server error {e.status_code} (attempt {attempt + 1}/{MAX_RETRIES})")
-                    time.sleep(delay)
-                else:
-                    raise
-
-        raise RuntimeError(
-            f"All {MAX_RETRIES} API call attempts failed for model {model}. "
-            f"Last error: {last_error}"
-        )
 
     @staticmethod
     def _parse_json(content: str) -> Dict[str, Any]:
