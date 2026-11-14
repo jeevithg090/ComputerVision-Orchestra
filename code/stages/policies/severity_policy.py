@@ -27,7 +27,11 @@ def calibrate_severity(
         return "unknown"
 
     if claim_object == "car" and issue_type == "dent":
-        return "medium" if object_part in {"rear_bumper", "door", "front_bumper", "quarter_panel", "body"} else "low"
+        return (
+            "medium"
+            if object_part in {"rear_bumper", "door", "front_bumper", "quarter_panel", "body"}
+            else "low"
+        )
 
     if issue_type == "scratch":
         return "low"
@@ -41,4 +45,3 @@ def calibrate_severity(
         return "low"
 
     return image_severity if image_severity in {"none", "low", "medium", "high", "unknown"} else "unknown"
-

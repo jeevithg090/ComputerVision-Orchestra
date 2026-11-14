@@ -13,8 +13,8 @@ from __future__ import annotations
 
 import csv
 import traceback
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable, Dict, List
 
 from llm_client import LLMClient, TokenTracker
 from models import (
@@ -52,12 +52,12 @@ OUTPUT_COLUMNS = [
 ]
 
 
-
 # ── Pipeline ────────────────────────────────────────────────────────────────
+
 
 def process_claim(
     claim: ClaimInput,
-    user_history: Dict[str, dict],
+    user_history: dict[str, dict],
     client: LLMClient,
     claim_index: int,
     total_claims: int,
@@ -94,12 +94,15 @@ def process_claim(
     user_data = user_history.get(claim.user_id)
     print(f"  {prefix} → Stage 5: Synthesizing decision (policies + fallback)...")
     decision = synthesize_decision(
-        claim, extraction, image_analysis,
-        evidence_check, risk_profile,
-        user_data, client,
+        claim,
+        extraction,
+        image_analysis,
+        evidence_check,
+        risk_profile,
+        user_data,
+        client,
     )
-    print(f"    ═══ Decision: {decision.claim_status.upper()} "
-          f"(severity={decision.severity}) ═══")
+    print(f"    ═══ Decision: {decision.claim_status.upper()} (severity={decision.severity}) ═══")
 
     return ClaimResult(
         input=claim,
@@ -144,14 +147,14 @@ def fallback_result(claim: ClaimInput, reason: str = "Processing error") -> Clai
 
 
 def process_claims(
-    claims: List[ClaimInput],
-    user_history: Dict[str, dict],
+    claims: list[ClaimInput],
+    user_history: dict[str, dict],
     client: LLMClient,
     process: Callable[..., ClaimResult] | None = None,
-) -> List[ClaimResult]:
+) -> list[ClaimResult]:
     """Process claims sequentially; a failing claim yields a fallback row, never a crash."""
     process = process or process_claim
-    results: List[ClaimResult] = []
+    results: list[ClaimResult] = []
     for i, claim in enumerate(claims):
         print(f"\n{'─' * 60}")
         try:
@@ -163,22 +166,24 @@ def process_claims(
     return results
 
 
-def load_claims(csv_path: Path) -> List[ClaimInput]:
+def load_claims(csv_path: Path) -> list[ClaimInput]:
     """Load claims from a CSV file (extra columns, e.g. labels, are ignored)."""
     claims = []
     with open(csv_path, encoding="utf-8") as f:
         reader = csv.DictReader(f)
         for row in reader:
-            claims.append(ClaimInput(
-                user_id=row["user_id"].strip(),
-                image_paths=row["image_paths"].strip(),
-                user_claim=row["user_claim"].strip(),
-                claim_object=row["claim_object"].strip(),
-            ))
+            claims.append(
+                ClaimInput(
+                    user_id=row["user_id"].strip(),
+                    image_paths=row["image_paths"].strip(),
+                    user_claim=row["user_claim"].strip(),
+                    claim_object=row["claim_object"].strip(),
+                )
+            )
     return claims
 
 
-def write_output(results: List[ClaimResult], output_path: Path):
+def write_output(results: list[ClaimResult], output_path: Path):
     """Write results to output CSV."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w", encoding="utf-8", newline="") as f:
@@ -186,22 +191,24 @@ def write_output(results: List[ClaimResult], output_path: Path):
         writer.writeheader()
         for result in results:
             d = result.decision
-            writer.writerow({
-                "user_id": result.input.user_id,
-                "image_paths": result.input.image_paths,
-                "user_claim": result.input.user_claim,
-                "claim_object": result.input.claim_object,
-                "evidence_standard_met": str(d.evidence_standard_met).lower(),
-                "evidence_standard_met_reason": d.evidence_standard_met_reason,
-                "risk_flags": d.risk_flags,
-                "issue_type": d.issue_type,
-                "object_part": d.object_part,
-                "claim_status": d.claim_status,
-                "claim_status_justification": d.claim_status_justification,
-                "supporting_image_ids": d.supporting_image_ids,
-                "valid_image": str(d.valid_image).lower(),
-                "severity": d.severity,
-            })
+            writer.writerow(
+                {
+                    "user_id": result.input.user_id,
+                    "image_paths": result.input.image_paths,
+                    "user_claim": result.input.user_claim,
+                    "claim_object": result.input.claim_object,
+                    "evidence_standard_met": str(d.evidence_standard_met).lower(),
+                    "evidence_standard_met_reason": d.evidence_standard_met_reason,
+                    "risk_flags": d.risk_flags,
+                    "issue_type": d.issue_type,
+                    "object_part": d.object_part,
+                    "claim_status": d.claim_status,
+                    "claim_status_justification": d.claim_status_justification,
+                    "supporting_image_ids": d.supporting_image_ids,
+                    "valid_image": str(d.valid_image).lower(),
+                    "severity": d.severity,
+                }
+            )
     print(f"\n✅ Output written to: {output_path}")
 
 
@@ -222,6 +229,5 @@ def print_summary(tracker: TokenTracker, elapsed: float, num_claims: int):
     print("\n  Model Breakdown:")
     for model, stats in summary["model_breakdown"].items():
         cached = f" ({stats['cached']} cached)" if stats["cached"] else ""
-        print(f"    {model}: {stats['calls']} calls{cached}, "
-              f"{stats['input']:,} in / {stats['output']:,} out")
+        print(f"    {model}: {stats['calls']} calls{cached}, {stats['input']:,} in / {stats['output']:,} out")
     print("=" * 60)

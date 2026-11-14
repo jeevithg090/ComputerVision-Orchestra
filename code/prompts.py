@@ -10,20 +10,17 @@ Each prompt includes:
 
 from __future__ import annotations
 
-from typing import List, Optional
-
 from config import (
-
-    ISSUE_TYPE_VALUES,
-    SEVERITY_VALUES,
     CAR_OBJECT_PARTS,
+    ISSUE_TYPE_VALUES,
     LAPTOP_OBJECT_PARTS,
     PACKAGE_OBJECT_PARTS,
     RISK_FLAG_VALUES,
+    SEVERITY_VALUES,
 )
 
-
 # ── Helpers ─────────────────────────────────────────────────────────────────
+
 
 def _parts_for_object(claim_object: str) -> str:
     mapping = {
@@ -77,7 +74,7 @@ def build_claim_extraction_user_prompt(claim_object: str, user_claim: str) -> st
 Analyze this conversation for a **{claim_object}** damage claim.
 
 Allowed object parts for {claim_object}: {parts_list}
-Allowed damage types: {', '.join(sorted(ISSUE_TYPE_VALUES))}
+Allowed damage types: {", ".join(sorted(ISSUE_TYPE_VALUES))}
 
 Conversation:
 \"\"\"{user_claim}\"\"\"
@@ -303,7 +300,7 @@ def build_decision_synthesis_user_prompt(
         lines.append(f"    Quality issues: {', '.join(quality) if quality else 'none'}")
         lines.append(f"    Text instruction detected: {img.get('text_instruction_detected', False)}")
         if img.get("text_instruction_content"):
-            lines.append(f"    Text content: \"{img['text_instruction_content']}\"")
+            lines.append(f'    Text content: "{img["text_instruction_content"]}"')
         lines.append(f"    Appears original: {img.get('appears_original', True)}")
         lines.append(f"    Relevance: {img.get('relevance_to_claim', 'unknown')}")
         img_analysis_lines.append("\n".join(lines))
@@ -342,11 +339,11 @@ CLAIM VERIFICATION — Final Decision Required
 
 CLAIM INFORMATION:
   Object type: {claim_object}
-  Customer claims: {claim_extraction.get('claim_summary', 'N/A')}
-  Claimed damage type: {claim_extraction.get('claimed_damage_type', 'unknown')}
-  Claimed object part: {claim_extraction.get('claimed_object_part', 'unknown')}
+  Customer claims: {claim_extraction.get("claim_summary", "N/A")}
+  Claimed damage type: {claim_extraction.get("claimed_damage_type", "unknown")}
+  Claimed object part: {claim_extraction.get("claimed_object_part", "unknown")}
   Adversarial signals: {adversarial_text}
-  Language: {claim_extraction.get('language_detected', 'en')}
+  Language: {claim_extraction.get("language_detected", "en")}
 
 IMAGE ANALYSIS:
 {img_analysis_text}

@@ -18,7 +18,7 @@ import os
 import time
 from io import BytesIO
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from openai import APIConnectionError, APIError, APITimeoutError, OpenAI, RateLimitError
 from PIL import Image
@@ -26,14 +26,13 @@ from PIL import Image
 from config import (
     CACHE_DIR,
     FALLBACK_MODEL,
+    IMAGE_DETAIL,
     MAX_RETRIES,
+    OPENAI_API_KEY_ENV,
+    REQUEST_TIMEOUT_S,
     RETRY_BASE_DELAY_S,
     RETRY_MAX_DELAY_S,
-    REQUEST_TIMEOUT_S,
-    IMAGE_DETAIL,
-    OPENAI_API_KEY_ENV,
 )
-
 
 CLAIM_EXTRACTION_SCHEMA = {
     "type": "object",
@@ -153,32 +152,41 @@ CLAIM_DECISION_SCHEMA = {
 
 # ── Token Tracker ───────────────────────────────────────────────────────────
 
+
 class TokenTracker:
     """Accumulates token usage across all API calls for the operational report."""
 
     def __init__(self):
-        self.calls: List[Dict[str, Any]] = []
+        self.calls: list[dict[str, Any]] = []
         self.total_input_tokens = 0
         self.total_output_tokens = 0
         self.total_reasoning_tokens = 0
 
-    def record(self, model: str, input_tokens: int, output_tokens: int,
-               reasoning_tokens: int = 0, cached: bool = False):
-        self.calls.append({
-            "model": model,
-            "input_tokens": input_tokens,
-            "output_tokens": output_tokens,
-            "reasoning_tokens": reasoning_tokens,
-            "cached": cached,
-            "timestamp": time.time(),
-        })
+    def record(
+        self,
+        model: str,
+        input_tokens: int,
+        output_tokens: int,
+        reasoning_tokens: int = 0,
+        cached: bool = False,
+    ):
+        self.calls.append(
+            {
+                "model": model,
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "reasoning_tokens": reasoning_tokens,
+                "cached": cached,
+                "timestamp": time.time(),
+            }
+        )
         if not cached:
             self.total_input_tokens += input_tokens
             self.total_output_tokens += output_tokens
             self.total_reasoning_tokens += reasoning_tokens
 
-    def summary(self) -> Dict[str, Any]:
-        model_breakdown: Dict[str, Dict[str, int]] = {}
+    def summary(self) -> dict[str, Any]:
+        model_breakdown: dict[str, dict[str, int]] = {}
         for c in self.calls:
             m = c["model"]
             if m not in model_breakdown:
@@ -201,6 +209,7 @@ class TokenTracker:
 
 # ── Cache ───────────────────────────────────────────────────────────────────
 
+
 class FileCache:
     """Simple file-based cache keyed by a hash of the request payload."""
 
@@ -211,15 +220,15 @@ class FileCache:
     def _key(self, payload: str) -> str:
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
-    def get(self, payload: str) -> Optional[Dict[str, Any]]:
+    def get(self, payload: str) -> dict[str, Any] | None:
         key = self._key(payload)
         path = self.cache_dir / f"{key}.json"
         if path.exists():
-            with open(path, "r", encoding="utf-8") as f:
+            with open(path, encoding="utf-8") as f:
                 return json.load(f)
         return None
 
-    def set(self, payload: str, value: Dict[str, Any]):
+    def set(self, payload: str, value: dict[str, Any]):
         key = self._key(payload)
         path = self.cache_dir / f"{key}.json"
         with open(path, "w", encoding="utf-8") as f:
@@ -227,6 +236,7 @@ class FileCache:
 
 
 # ── Image Encoding ──────────────────────────────────────────────────────────
+
 
 def encode_image_base64(image_path: str | Path) -> str:
     """Read an image file, convert to JPEG in memory, and return base64 string."""
@@ -239,7 +249,7 @@ def encode_image_base64(image_path: str | Path) -> str:
         return base64.b64encode(buffer.getvalue()).decode("utf-8")
 
 
-def _responses_image_content_part(image_path: str | Path) -> Dict[str, Any]:
+def _responses_image_content_part(image_path: str | Path) -> dict[str, Any]:
     """Build a Responses API input_image part from a local image."""
     b64 = encode_image_base64(image_path)
     return {
@@ -250,6 +260,7 @@ def _responses_image_content_part(image_path: str | Path) -> Dict[str, Any]:
 
 
 # ── LLM Client ─────────────────────────────────────────────────────────────
+
 
 class LLMClient:
     """
@@ -262,10 +273,10 @@ class LLMClient:
         result = client.call_reasoning(model, developer_msg, user_msg)
     """
 
-    def __init__(self, tracker: Optional[TokenTracker] = None):
+    def __init__(self, tracker: TokenTracker | None = None):
         api_key = os.environ.get(OPENAI_API_KEY_ENV)
         if not api_key:
-            raise EnvironmentError(
+            raise OSError(
                 f"Environment variable {OPENAI_API_KEY_ENV} is not set. "
                 f"Please set it before running the pipeline."
             )
@@ -280,7 +291,7 @@ class LLMClient:
         model: str,
         system_message: str,
         user_message: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Call a text-only model, returns parsed JSON dict."""
         return self._call_responses(
             model=model,
@@ -295,10 +306,10 @@ class LLMClient:
         model: str,
         system_message: str,
         user_text: str,
-        image_paths: List[str | Path],
-    ) -> Dict[str, Any]:
+        image_paths: list[str | Path],
+    ) -> dict[str, Any]:
         """Call a vision model with text + images, returns parsed JSON dict."""
-        user_content: List[Dict[str, Any]] = [
+        user_content: list[dict[str, Any]] = [
             {"type": "input_text", "text": user_text},
         ]
         for img_path in image_paths:
@@ -318,7 +329,7 @@ class LLMClient:
         developer_message: str,
         user_message: str,
         reasoning_effort: str = "high",
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Call the final-decision fallback model, returns parsed JSON dict."""
         return self._call_responses(
             model=model,
@@ -336,11 +347,11 @@ class LLMClient:
         self,
         model: str,
         system_message: str,
-        user_content: List[dict],
+        user_content: list[dict],
         schema_name: str,
     ) -> str:
         """Build a cache key that hashes full local-image payloads."""
-        parts: List[Any] = ["responses-v2", model, schema_name, system_message]
+        parts: list[Any] = ["responses-v2", model, schema_name, system_message]
         for item in user_content:
             if item.get("type") == "input_text":
                 parts.append(item.get("text", ""))
@@ -354,21 +365,19 @@ class LLMClient:
         self,
         model: str,
         system_message: str,
-        user_content: List[dict],
+        user_content: list[dict],
         schema_name: str,
-        schema: Dict[str, Any],
+        schema: dict[str, Any],
         reasoning_effort: str = "high",
         is_reasoning: bool = False,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Execute a Responses API call with strict structured outputs."""
         active_model = model
         tried_fallback = False
-        last_error: Optional[Exception] = None
+        last_error: Exception | None = None
 
         while True:
-            cache_key = self._responses_cache_key(
-                active_model, system_message, user_content, schema_name
-            )
+            cache_key = self._responses_cache_key(active_model, system_message, user_content, schema_name)
             cached = self.cache.get(cache_key)
             if cached is not None:
                 self.tracker.record(active_model, 0, 0, cached=True)
@@ -376,7 +385,7 @@ class LLMClient:
 
             for attempt in range(MAX_RETRIES):
                 try:
-                    kwargs: Dict[str, Any] = {
+                    kwargs: dict[str, Any] = {
                         "model": active_model,
                         "instructions": system_message,
                         "input": [{"role": "user", "content": user_content}],
@@ -409,7 +418,7 @@ class LLMClient:
 
                 except (RateLimitError, APITimeoutError, APIConnectionError) as e:
                     last_error = e
-                    delay = min(RETRY_BASE_DELAY_S * (2 ** attempt), RETRY_MAX_DELAY_S)
+                    delay = min(RETRY_BASE_DELAY_S * (2**attempt), RETRY_MAX_DELAY_S)
                     print(f"  ⚠ API error (attempt {attempt + 1}/{MAX_RETRIES}): {e}")
                     print(f"    Retrying in {delay:.1f}s...")
                     time.sleep(delay)
@@ -426,7 +435,7 @@ class LLMClient:
                         print(f"  ⚠ Model unavailable; falling back to {FALLBACK_MODEL}.")
                         break
                     if e.status_code and e.status_code >= 500:
-                        delay = min(RETRY_BASE_DELAY_S * (2 ** attempt), RETRY_MAX_DELAY_S)
+                        delay = min(RETRY_BASE_DELAY_S * (2**attempt), RETRY_MAX_DELAY_S)
                         print(f"  ⚠ Server error {e.status_code} (attempt {attempt + 1}/{MAX_RETRIES})")
                         time.sleep(delay)
                     else:
@@ -438,7 +447,7 @@ class LLMClient:
                 )
 
     @staticmethod
-    def _parse_json(content: str) -> Dict[str, Any]:
+    def _parse_json(content: str) -> dict[str, Any]:
         """Parse JSON from model response, handling common edge cases."""
         content = content.strip()
         # Strip markdown code fences if present
