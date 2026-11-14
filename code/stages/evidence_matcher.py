@@ -16,25 +16,22 @@ Evidence standard is NOT met only when:
 
 from __future__ import annotations
 
-from typing import List
-
-from models import (
-    ClaimInput,
-    ClaimExtraction,
-    ImageAnalysisResult,
-    EvidenceCheck,
-)
 from config import (
     ISSUE_TO_EVIDENCE_FAMILY,
     load_evidence_requirements,
 )
-
+from models import (
+    ClaimExtraction,
+    ClaimInput,
+    EvidenceCheck,
+    ImageAnalysisResult,
+)
 
 # Load requirements once at module level
 _EVIDENCE_REQUIREMENTS = None
 
 
-def _get_requirements() -> List[dict]:
+def _get_requirements() -> list[dict]:
     global _EVIDENCE_REQUIREMENTS
     if _EVIDENCE_REQUIREMENTS is None:
         _EVIDENCE_REQUIREMENTS = load_evidence_requirements()
@@ -60,8 +57,7 @@ def match_evidence(
         EvidenceCheck indicating whether evidence standards are met.
     """
     requirements = _get_requirements()
-    applicable_req_ids: List[str] = []
-    reasons: List[str] = []
+    applicable_req_ids: list[str] = []
 
     # ── Find applicable requirements ────────────────────────────────────
     claim_object = claim.claim_object
@@ -80,11 +76,12 @@ def match_evidence(
 
         # Universal requirements (apply to all objects)
         if obj == "all":
-            if applies_to == "general claim review":
-                is_applicable = True
-            elif applies_to == "multi-image rows" and len(image_analysis.images) > 1:
-                is_applicable = True
-            elif applies_to == "reviewability":
+            if (
+                applies_to == "general claim review"
+                or applies_to == "multi-image rows"
+                and len(image_analysis.images) > 1
+                or applies_to == "reviewability"
+            ):
                 is_applicable = True
 
         # Object-specific requirements
@@ -98,15 +95,12 @@ def match_evidence(
     # ── Evaluate evidence against requirements ──────────────────────────
 
     # Check 1: Is at least one image relevant and showing the claimed object?
-    any_object_match = any(
-        img.object_matches_claim for img in image_analysis.images
-    )
+    any_object_match = any(img.object_matches_claim for img in image_analysis.images)
 
     # Check 2: Is the claimed part visible in at least one image?
     claimed_part = extraction.claimed_object_part
     any_part_visible = any(
-        img.part_matches_claim or
-        img.part_visible == claimed_part
+        img.part_matches_claim or img.part_visible == claimed_part
         for img in image_analysis.images
         if img.object_matches_claim
     )
@@ -114,16 +108,12 @@ def match_evidence(
     # Check 3: Are there severe quality issues blocking evaluation?
     blocking_quality_issues = {"wrong_angle", "cropped_or_obstructed"}
     all_images_blocked = all(
-        bool(set(img.quality_issues) & blocking_quality_issues) or
-        not img.object_matches_claim
+        bool(set(img.quality_issues) & blocking_quality_issues) or not img.object_matches_claim
         for img in image_analysis.images
     )
 
     # Check 4: Is at least one image relevant?
-    any_usable_image = any(
-        img.relevance_to_claim != "not_relevant"
-        for img in image_analysis.images
-    )
+    any_usable_image = any(img.relevance_to_claim != "not_relevant" for img in image_analysis.images)
 
     # ── Decision logic ──────────────────────────────────────────────────
 
@@ -161,9 +151,7 @@ def match_evidence(
     if not any_usable_image:
         return EvidenceCheck(
             evidence_standard_met=False,
-            evidence_standard_met_reason=(
-                "None of the submitted images are relevant to the claim."
-            ),
+            evidence_standard_met_reason=("None of the submitted images are relevant to the claim."),
             applicable_requirements=applicable_req_ids,
         )
 
@@ -171,20 +159,11 @@ def match_evidence(
     # and is of sufficient quality to evaluate
 
     # Build a positive reason
-    matching_images = [
-        img for img in image_analysis.images
-        if img.object_matches_claim
-    ]
-    part_match = any(
-        img.part_visible == claimed_part
-        for img in matching_images
-    )
+    matching_images = [img for img in image_analysis.images if img.object_matches_claim]
+    part_match = any(img.part_visible == claimed_part for img in matching_images)
 
     if part_match:
-        reason = (
-            f"The {claimed_part} is visible and the image quality is "
-            "sufficient to evaluate the claim."
-        )
+        reason = f"The {claimed_part} is visible and the image quality is sufficient to evaluate the claim."
     else:
         visible_parts = sorted({img.part_visible for img in matching_images if img.part_visible != "unknown"})
         if visible_parts:

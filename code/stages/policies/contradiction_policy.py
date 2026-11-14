@@ -21,9 +21,9 @@ def should_support_claim(
         return False
 
     return (
-        image.claimed_damage_visible or
-        image.support_role == "supports_claim" or
-        damage_types_related(image.damage_type, extraction.claimed_damage_type)
+        image.claimed_damage_visible
+        or image.support_role == "supports_claim"
+        or damage_types_related(image.damage_type, extraction.claimed_damage_type)
     )
 
 
@@ -88,4 +88,3 @@ def _is_vague_laptop_physical_claim(
     if extraction.claimed_damage_type not in {"unknown", "broken_part", "none"}:
         return False
     return image.damage_type in {"unknown", "none"} or image.damage_confidence < 0.75
-

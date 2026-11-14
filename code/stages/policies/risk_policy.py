@@ -6,11 +6,10 @@ should only expose risk flags that affect the decision evidence.
 
 from __future__ import annotations
 
-from typing import Iterable, Optional
+from collections.abc import Iterable
 
 from config import RISK_FLAG_VALUES
 from models import ImageAnalysisResult
-
 
 QUALITY_FLAGS = {"blurry_image", "cropped_or_obstructed", "low_light_or_glare", "wrong_angle"}
 
@@ -22,14 +21,13 @@ def finalize_risk_flags(
     claim_status: str,
     rule_id: str,
     supporting_ids: Iterable[str],
-    user_history: Optional[dict] = None,
+    user_history: dict | None = None,
 ) -> str:
     flags: set[str] = set()
     base = {f for f in base_flags if f and f != "none"}
     selected_ids = {sid for sid in supporting_ids if sid and sid != "none"}
     selected_images = [
-        img for img in image_analysis.images
-        if not selected_ids or img.image_id in selected_ids
+        img for img in image_analysis.images if not selected_ids or img.image_id in selected_ids
     ]
 
     history_flags = _history_flags(user_history)
@@ -63,12 +61,12 @@ def finalize_risk_flags(
 
     evidence_risks = flags - {"user_history_risk", "manual_review_required"}
     if (
-        "manual_review_required" in history_flags or
-        "text_instruction_present" in flags or
-        "wrong_object" in flags or
-        "wrong_object_part" in flags or
-        "non_original_image" in flags or
-        ("user_history_risk" in flags and evidence_risks)
+        "manual_review_required" in history_flags
+        or "text_instruction_present" in flags
+        or "wrong_object" in flags
+        or "wrong_object_part" in flags
+        or "non_original_image" in flags
+        or ("user_history_risk" in flags and evidence_risks)
     ):
         flags.add("manual_review_required")
 
@@ -76,7 +74,7 @@ def finalize_risk_flags(
     return ";".join(valid) if valid else "none"
 
 
-def _history_flags(user_history: Optional[dict]) -> set[str]:
+def _history_flags(user_history: dict | None) -> set[str]:
     if not user_history:
         return set()
     raw = user_history.get("history_flags", "none") or "none"

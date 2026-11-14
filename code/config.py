@@ -5,14 +5,14 @@ All paths, model names, allowed values, and operational parameters
 are centralized here so no magic strings leak into business logic.
 """
 
-import os
 import csv
+import os
 from pathlib import Path
-from typing import Dict, FrozenSet, List
 
 # Load .env file if present (for OPENAI_API_KEY etc.)
 try:
     from dotenv import load_dotenv
+
     # Look for .env in code/ dir, project root, or current dir
     _code_dir = Path(__file__).resolve().parent
     _project_root = _code_dir.parent
@@ -64,55 +64,117 @@ REQUEST_TIMEOUT_S = 120  # per-request timeout
 
 # ── Allowed Value Sets ──────────────────────────────────────────────────────
 
-CLAIM_STATUS_VALUES: FrozenSet[str] = frozenset([
-    "supported", "contradicted", "not_enough_information",
-])
+CLAIM_STATUS_VALUES: frozenset[str] = frozenset(
+    [
+        "supported",
+        "contradicted",
+        "not_enough_information",
+    ]
+)
 
-ISSUE_TYPE_VALUES: FrozenSet[str] = frozenset([
-    "dent", "scratch", "crack", "glass_shatter", "broken_part",
-    "missing_part", "torn_packaging", "crushed_packaging",
-    "water_damage", "stain", "none", "unknown",
-])
+ISSUE_TYPE_VALUES: frozenset[str] = frozenset(
+    [
+        "dent",
+        "scratch",
+        "crack",
+        "glass_shatter",
+        "broken_part",
+        "missing_part",
+        "torn_packaging",
+        "crushed_packaging",
+        "water_damage",
+        "stain",
+        "none",
+        "unknown",
+    ]
+)
 
-CAR_OBJECT_PARTS: FrozenSet[str] = frozenset([
-    "front_bumper", "rear_bumper", "door", "hood", "windshield",
-    "side_mirror", "headlight", "taillight", "fender", "quarter_panel",
-    "body", "unknown",
-])
+CAR_OBJECT_PARTS: frozenset[str] = frozenset(
+    [
+        "front_bumper",
+        "rear_bumper",
+        "door",
+        "hood",
+        "windshield",
+        "side_mirror",
+        "headlight",
+        "taillight",
+        "fender",
+        "quarter_panel",
+        "body",
+        "unknown",
+    ]
+)
 
-LAPTOP_OBJECT_PARTS: FrozenSet[str] = frozenset([
-    "screen", "keyboard", "trackpad", "hinge", "lid", "corner",
-    "port", "base", "body", "unknown",
-])
+LAPTOP_OBJECT_PARTS: frozenset[str] = frozenset(
+    [
+        "screen",
+        "keyboard",
+        "trackpad",
+        "hinge",
+        "lid",
+        "corner",
+        "port",
+        "base",
+        "body",
+        "unknown",
+    ]
+)
 
-PACKAGE_OBJECT_PARTS: FrozenSet[str] = frozenset([
-    "box", "package_corner", "package_side", "seal", "label",
-    "contents", "item", "unknown",
-])
+PACKAGE_OBJECT_PARTS: frozenset[str] = frozenset(
+    [
+        "box",
+        "package_corner",
+        "package_side",
+        "seal",
+        "label",
+        "contents",
+        "item",
+        "unknown",
+    ]
+)
 
-OBJECT_PARTS: Dict[str, FrozenSet[str]] = {
+OBJECT_PARTS: dict[str, frozenset[str]] = {
     "car": CAR_OBJECT_PARTS,
     "laptop": LAPTOP_OBJECT_PARTS,
     "package": PACKAGE_OBJECT_PARTS,
 }
 
-RISK_FLAG_VALUES: FrozenSet[str] = frozenset([
-    "none", "blurry_image", "cropped_or_obstructed", "low_light_or_glare",
-    "wrong_angle", "wrong_object", "wrong_object_part", "damage_not_visible",
-    "claim_mismatch", "possible_manipulation", "non_original_image",
-    "text_instruction_present", "user_history_risk", "manual_review_required",
-])
+RISK_FLAG_VALUES: frozenset[str] = frozenset(
+    [
+        "none",
+        "blurry_image",
+        "cropped_or_obstructed",
+        "low_light_or_glare",
+        "wrong_angle",
+        "wrong_object",
+        "wrong_object_part",
+        "damage_not_visible",
+        "claim_mismatch",
+        "possible_manipulation",
+        "non_original_image",
+        "text_instruction_present",
+        "user_history_risk",
+        "manual_review_required",
+    ]
+)
 
-SEVERITY_VALUES: FrozenSet[str] = frozenset([
-    "none", "low", "medium", "high", "unknown",
-])
+SEVERITY_VALUES: frozenset[str] = frozenset(
+    [
+        "none",
+        "low",
+        "medium",
+        "high",
+        "unknown",
+    ]
+)
 
-CLAIM_OBJECTS: FrozenSet[str] = frozenset(["car", "laptop", "package"])
+CLAIM_OBJECTS: frozenset[str] = frozenset(["car", "laptop", "package"])
 
 
 # ── Issue-type → Evidence-requirement family mapping ────────────────────────
 
-ISSUE_TO_EVIDENCE_FAMILY: Dict[str, Dict[str, str]] = {
+ISSUE_TO_EVIDENCE_FAMILY: dict[str, dict[str, str]] = {
     "car": {
         "dent": "dent or scratch",
         "scratch": "dent or scratch",
@@ -142,6 +204,7 @@ ISSUE_TO_EVIDENCE_FAMILY: Dict[str, Dict[str, str]] = {
 
 # ── Data Loading Helpers ────────────────────────────────────────────────────
 
+
 def _to_int(value: object) -> int:
     """Parse a CSV count cell; blank or malformed cells count as 0."""
     try:
@@ -150,9 +213,9 @@ def _to_int(value: object) -> int:
         return 0
 
 
-def load_user_history(path: Path = USER_HISTORY_CSV) -> Dict[str, dict]:
+def load_user_history(path: Path = USER_HISTORY_CSV) -> dict[str, dict]:
     """Load user_history.csv into a dict keyed by user_id."""
-    history: Dict[str, dict] = {}
+    history: dict[str, dict] = {}
     with open(path, encoding="utf-8") as f:
         reader = csv.DictReader(f)
         for row in reader:
@@ -171,16 +234,18 @@ def load_user_history(path: Path = USER_HISTORY_CSV) -> Dict[str, dict]:
     return history
 
 
-def load_evidence_requirements(path: Path = EVIDENCE_REQUIREMENTS_CSV) -> List[dict]:
+def load_evidence_requirements(path: Path = EVIDENCE_REQUIREMENTS_CSV) -> list[dict]:
     """Load evidence_requirements.csv into a list of dicts."""
-    reqs: List[dict] = []
+    reqs: list[dict] = []
     with open(path, encoding="utf-8") as f:
         reader = csv.DictReader(f)
         for row in reader:
-            reqs.append({
-                "requirement_id": row["requirement_id"].strip(),
-                "claim_object": row["claim_object"].strip(),
-                "applies_to": row["applies_to"].strip(),
-                "minimum_image_evidence": row["minimum_image_evidence"].strip(),
-            })
+            reqs.append(
+                {
+                    "requirement_id": row["requirement_id"].strip(),
+                    "claim_object": row["claim_object"].strip(),
+                    "applies_to": row["applies_to"].strip(),
+                    "minimum_image_evidence": row["minimum_image_evidence"].strip(),
+                }
+            )
     return reqs

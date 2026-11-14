@@ -31,17 +31,17 @@ from pipeline import load_claims, print_summary, process_claims, write_output  #
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        description="Multi-Modal Evidence Review — Damage Claim Verification"
-    )
+    parser = argparse.ArgumentParser(description="Multi-Modal Evidence Review — Damage Claim Verification")
     parser.add_argument(
-        "--input", "-i",
+        "--input",
+        "-i",
         type=str,
         default=str(CLAIMS_CSV),
         help=f"Path to input claims CSV (default: {CLAIMS_CSV})",
     )
     parser.add_argument(
-        "--output", "-o",
+        "--output",
+        "-o",
         type=str,
         default=str(OUTPUT_CSV),
         help=f"Path to output CSV (default: {OUTPUT_CSV})",

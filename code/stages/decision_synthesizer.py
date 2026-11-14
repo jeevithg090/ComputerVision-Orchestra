@@ -8,33 +8,31 @@ LLM only as a fallback for unresolved cases.
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional
-
-from models import (
-    ClaimInput,
-    ClaimExtraction,
-    ImageAnalysisResult,
-    EvidenceCheck,
-    RiskProfile,
-    ClaimDecision,
-    AdjudicatedDecision,
-)
-from llm_client import LLMClient
 from config import (
-    DECISION_SYNTHESIS_MODEL,
-    SYNTHESIS_REASONING_EFFORT,
     CLAIM_STATUS_VALUES,
+    DECISION_SYNTHESIS_MODEL,
     ISSUE_TYPE_VALUES,
-    SEVERITY_VALUES,
     OBJECT_PARTS,
     RISK_FLAG_VALUES,
+    SEVERITY_VALUES,
+    SYNTHESIS_REASONING_EFFORT,
     load_evidence_requirements,
 )
+from llm_client import LLMClient
+from models import (
+    AdjudicatedDecision,
+    ClaimDecision,
+    ClaimExtraction,
+    ClaimInput,
+    EvidenceCheck,
+    ImageAnalysisResult,
+    RiskProfile,
+)
+from normalize import normalize_label
 from prompts import (
     DECISION_SYNTHESIS_DEVELOPER,
     build_decision_synthesis_user_prompt,
 )
-from normalize import normalize_label
 from stages.policies.contradiction_policy import (
     mismatch_issue_type,
     should_support_claim,
@@ -52,7 +50,9 @@ def _get_requirements_text(claim_object: str) -> str:
     for req in reqs:
         obj = req["claim_object"]
         if obj == "all" or obj == claim_object:
-            lines.append(f"  [{req['requirement_id']}] ({req['applies_to']}): {req['minimum_image_evidence']}")
+            lines.append(
+                f"  [{req['requirement_id']}] ({req['applies_to']}): {req['minimum_image_evidence']}"
+            )
     return "\n".join(lines) if lines else "  No specific requirements found."
 
 
@@ -62,7 +62,7 @@ def synthesize_decision(
     image_analysis: ImageAnalysisResult,
     evidence_check: EvidenceCheck,
     risk_profile: RiskProfile,
-    user_history: Optional[dict],
+    user_history: dict | None,
     client: LLMClient,
 ) -> ClaimDecision:
     """
@@ -140,7 +140,7 @@ def adjudicate_decision(
     image_analysis: ImageAnalysisResult,
     evidence_check: EvidenceCheck,
     risk_profile: RiskProfile,
-    user_history: Optional[dict] = None,
+    user_history: dict | None = None,
 ) -> AdjudicatedDecision:
     """Apply deterministic high-confidence adjudication rules."""
     images = image_analysis.images
@@ -150,19 +150,17 @@ def adjudicate_decision(
 
     object_images = [img for img in images if img.object_matches_claim]
     claimed_part_images = [
-        img for img in object_images
-        if img.part_matches_claim or img.part_visible == claimed_part
+        img for img in object_images if img.part_matches_claim or img.part_visible == claimed_part
     ]
-    support_images = [
-        img for img in claimed_part_images
-        if should_support_claim(claim, extraction, img)
-    ]
+    support_images = [img for img in claimed_part_images if should_support_claim(claim, extraction, img)]
     undamaged_claimed_part = [
-        img for img in claimed_part_images
+        img
+        for img in claimed_part_images
         if not img.damage_visible and img.relevance_to_claim != "not_relevant"
     ]
     mismatch_images = [
-        img for img in object_images
+        img
+        for img in object_images
         if img.damage_visible and not (img.part_matches_claim or img.part_visible == claimed_part)
     ]
     text_images = [img for img in images if img.text_instruction_detected]
@@ -194,7 +192,9 @@ def adjudicate_decision(
             rule_id="image_text_instruction",
             claim_status="contradicted",
             issue_type="none",
-            object_part=claimed_part if claimed_part in OBJECT_PARTS.get(claim.claim_object, set()) else "unknown",
+            object_part=claimed_part
+            if claimed_part in OBJECT_PARTS.get(claim.claim_object, set())
+            else "unknown",
             severity="none",
             supporting_ids=[img.image_id for img in images],
             evidence_check=evidence_check,
@@ -340,8 +340,7 @@ def adjudicate_decision(
         )
 
     vague_physical_images = [
-        img for img in claimed_part_images
-        if vague_physical_claim_is_contradicted(claim, extraction, img)
+        img for img in claimed_part_images if vague_physical_claim_is_contradicted(claim, extraction, img)
     ]
     if vague_physical_images:
         flags.add("damage_not_visible")
@@ -409,11 +408,11 @@ def _adjudicated(
     issue_type: str,
     object_part: str,
     severity: str,
-    supporting_ids: List[str],
+    supporting_ids: list[str],
     evidence_check: EvidenceCheck,
     flags: set[str],
     image_analysis: ImageAnalysisResult,
-    user_history: Optional[dict],
+    user_history: dict | None,
     justification: str,
     valid_image: bool,
 ) -> AdjudicatedDecision:
@@ -451,7 +450,7 @@ def _build_decision(
     evidence_check: EvidenceCheck,
     risk_profile: RiskProfile,
     image_analysis: ImageAnalysisResult,
-    user_history: Optional[dict] = None,
+    user_history: dict | None = None,
     has_text_instruction: bool = False,
 ) -> ClaimDecision:
     """Validate and normalize the raw fallback-model response into a ClaimDecision."""
@@ -462,15 +461,22 @@ def _build_decision(
         claim_status = _closest_status(claim_status)
 
     # ── Missing-contents claims ─────────────────────────────────────────
-    is_missing_claim = extraction.claimed_damage_type == "missing_part" and extraction.claimed_object_part in ["contents", "item"]
+    is_missing_claim = (
+        extraction.claimed_damage_type == "missing_part"
+        and extraction.claimed_object_part in ["contents", "item"]
+    )
     if is_missing_claim:
         # Images generally cannot prove absence. Default to not_enough_information
         # unless we clearly see the expected item.
         expected_item_clearly_visible = False
         for img in image_analysis.images:
-            if img.object_matches_claim and not img.damage_visible and img.relevance_to_claim != "not_relevant":
+            if (
+                img.object_matches_claim
+                and not img.damage_visible
+                and img.relevance_to_claim != "not_relevant"
+            ):
                 expected_item_clearly_visible = True
-        
+
         if expected_item_clearly_visible:
             claim_status = "contradicted"
         else:
@@ -545,10 +551,7 @@ def _build_decision(
     )
 
     # ── justification ───────────────────────────────────────────────────
-    justification = raw.get(
-        "claim_status_justification",
-        "Decision based on visual evidence analysis."
-    )
+    justification = raw.get("claim_status_justification", "Decision based on visual evidence analysis.")
 
     return ClaimDecision(
         evidence_standard_met=evidence_met,

@@ -13,7 +13,7 @@ pixels the model actually saw.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any
 
 from config import (
     DATASET_DIR,
@@ -52,7 +52,7 @@ def analyze_images(
     present, _missing = resolve_images(claim.image_ids, claim.image_path_list)
     present_ids = [image_id for image_id, _ in present]
 
-    raw_images: List[Dict[str, Any]] = []
+    raw_images: list[dict[str, Any]] = []
     if present:
         user_prompt = build_image_analysis_user_prompt(
             claim_object=claim.claim_object,
@@ -71,7 +71,7 @@ def analyze_images(
         if not raw_images and any(k in result for k in ("image_id", "object_visible")):
             raw_images = [result]
 
-    parsed: Dict[str, SingleImageAnalysis] = {}
+    parsed: dict[str, SingleImageAnalysis] = {}
     for i, raw in enumerate(raw_images):
         if not isinstance(raw, dict):
             continue
@@ -85,15 +85,12 @@ def analyze_images(
             continue
         parsed[img_id] = parse_image_analysis(raw, img_id, claim, extraction)
 
-    analyses = [
-        parsed.get(image_id) or unreadable_image_analysis(image_id)
-        for image_id in claim.image_ids
-    ]
+    analyses = [parsed.get(image_id) or unreadable_image_analysis(image_id) for image_id in claim.image_ids]
     return ImageAnalysisResult(images=analyses)
 
 
 def parse_image_analysis(
-    raw: Dict[str, Any],
+    raw: dict[str, Any],
     img_id: str,
     claim: ClaimInput,
     extraction: ClaimExtraction,
@@ -120,10 +117,12 @@ def parse_image_analysis(
     object_category = str(object_category).lower().strip().replace(" ", "_")
     if object_category not in {"car", "laptop", "package"}:
         object_category = "other"
-    object_matches = bool(raw.get(
-        "object_matches_claim",
-        raw.get("is_expected_object", object_category == claim.claim_object),
-    ))
+    object_matches = bool(
+        raw.get(
+            "object_matches_claim",
+            raw.get("is_expected_object", object_category == claim.claim_object),
+        )
+    )
     part_matches = bool(raw.get("part_matches_claim", part_visible == extraction.claimed_object_part))
     text_content = raw.get("text_instruction_content") or raw.get("instructional_text", "")
     text_detected = bool(raw.get("text_instruction_detected", bool(text_content)))
@@ -185,9 +184,9 @@ def unreadable_image_analysis(image_id: str) -> SingleImageAnalysis:
 
 
 def resolve_images(
-    image_ids: List[str],
-    relative_paths: List[str],
-) -> Tuple[List[Tuple[str, Path]], List[str]]:
+    image_ids: list[str],
+    relative_paths: list[str],
+) -> tuple[list[tuple[str, Path]], list[str]]:
     """
     Resolve image paths (relative to ``dataset/``, or absolute).
 
@@ -195,9 +194,9 @@ def resolve_images(
     ``(image_id, path)`` pairs for files that exist and ``missing`` lists the
     IDs of images that could not be found.
     """
-    present: List[Tuple[str, Path]] = []
-    missing: List[str] = []
-    for image_id, rel in zip(image_ids, relative_paths):
+    present: list[tuple[str, Path]] = []
+    missing: list[str] = []
+    for image_id, rel in zip(image_ids, relative_paths, strict=False):
         candidate = Path(rel.strip())
         full = candidate if candidate.is_absolute() else DATASET_DIR / candidate
         if full.is_file():
@@ -221,7 +220,7 @@ def _coerce_confidence(value: object) -> float:
     return min(max(conf, 0.0), 1.0)
 
 
-def _as_list(value: object) -> List[str]:
+def _as_list(value: object) -> list[str]:
     """Accept a list or comma-separated string; drop blanks and 'none'."""
     if isinstance(value, str):
         items = value.split(",")

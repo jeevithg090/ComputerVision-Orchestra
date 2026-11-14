@@ -10,22 +10,19 @@ The risk assessment ADDS CONTEXT but does not override visual evidence.
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Set
-
+from config import RISK_FLAG_VALUES, load_user_history
 from models import (
-    ClaimInput,
     ClaimExtraction,
+    ClaimInput,
     ImageAnalysisResult,
     RiskProfile,
 )
-from config import RISK_FLAG_VALUES, load_user_history
-
 
 # Load user history once at module level
 _USER_HISTORY = None
 
 
-def _get_user_history() -> Dict[str, dict]:
+def _get_user_history() -> dict[str, dict]:
     global _USER_HISTORY
     if _USER_HISTORY is None:
         _USER_HISTORY = load_user_history()
@@ -53,8 +50,8 @@ def assess_risk(
     user_history = _get_user_history()
     user_data = user_history.get(claim.user_id)
 
-    flags: Set[str] = set()
-    summary_parts: List[str] = []
+    flags: set[str] = set()
+    summary_parts: list[str] = []
     rejection_rate = 0.0
 
     # ── User History Flags ──────────────────────────────────────────────
@@ -94,10 +91,11 @@ def assess_risk(
     # ── Image-Level Flags ───────────────────────────────────────────────
 
     has_claim_support = any(
-        img.object_matches_claim and (
-            img.claimed_damage_visible or
-            img.support_role == "supports_claim" or
-            (img.part_matches_claim and img.damage_visible)
+        img.object_matches_claim
+        and (
+            img.claimed_damage_visible
+            or img.support_role == "supports_claim"
+            or (img.part_matches_claim and img.damage_visible)
         )
         for img in image_analysis.images
     )
@@ -135,21 +133,25 @@ def assess_risk(
 
     # If the image shows damage on a different part than claimed
     for img in image_analysis.images:
-        if (img.object_matches_claim and
-            img.damage_visible and
-            not img.part_matches_claim and
-            img.part_visible != extraction.claimed_object_part and
-            img.part_visible != "unknown"):
+        if (
+            img.object_matches_claim
+            and img.damage_visible
+            and not img.part_matches_claim
+            and img.part_visible != extraction.claimed_object_part
+            and img.part_visible != "unknown"
+        ):
             flags.add("claim_mismatch")
             flags.add("wrong_object_part")
             break
 
     # If the damage type visible is fundamentally different from claimed
     for img in image_analysis.images:
-        if (img.object_matches_claim and
-            img.damage_visible and
-            img.damage_type != extraction.claimed_damage_type and
-            img.damage_type not in ("unknown", "none")):
+        if (
+            img.object_matches_claim
+            and img.damage_visible
+            and img.damage_type != extraction.claimed_damage_type
+            and img.damage_type not in ("unknown", "none")
+        ):
             # Only flag as mismatch if damage types are in different categories
             if not _damage_types_related(img.damage_type, extraction.claimed_damage_type):
                 flags.add("claim_mismatch")
@@ -186,7 +188,4 @@ def _damage_types_related(type_a: str, type_b: str) -> bool:
         {"torn_packaging", "crushed_packaging"},  # Both are package exterior
         {"water_damage", "stain"},  # Both are surface discoloration
     ]
-    for group in related_groups:
-        if type_a in group and type_b in group:
-            return True
-    return False
+    return any(type_a in group and type_b in group for group in related_groups)
